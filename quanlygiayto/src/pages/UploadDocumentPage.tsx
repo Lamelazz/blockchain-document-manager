@@ -1,100 +1,150 @@
-import React from 'react'
-import { registerDocument, DocType } from '../services/contract'
-import { sha256File } from '../services/hash'
-import { currentUser } from '../services/auth'
+import React from "react";
+import { sha256File } from "../services/hash";
+import { currentUser } from "../services/auth";
+import { getContract, connectWallet } from "../services/web3";
 
 export default function UploadDocumentPage() {
-  const user = currentUser()
-  // Chỉ cho user thường được upload
-  if (user?.role === 'admin') {
-    return <div className="item">🚫 Chức năng này chỉ dành cho người dùng thông thường.</div>
-  }
 
-  const [docId, setDocId] = React.useState('')
-  const [docType, setDocType] = React.useState<DocType>('CCCD')
-  const [file, setFile] = React.useState<File | null>(null)
-  const [note, setNote] = React.useState('')
-  const [tags, setTags] = React.useState<string>('')
-  const [hash, setHash] = React.useState('')
-  const [msg, setMsg] = React.useState('')
+  const user = currentUser();
+  if (user?.role === "admin")
+    return <div style={{padding:30,fontSize:18,color:"red"}}>Admin không thể upload tài liệu</div>;
 
-  const onPickFile = (f: File | null) => { setFile(f); setHash(''); if (f) setMsg(`Đã chọn: ${f.name}`) }
-  const onHash = async () => { if (!file) return setMsg('Hãy chọn tệp trước.'); const h = await sha256File(file); setHash(h); setMsg('Đã tính SHA-256.') }
+  const [connected,setConnected] = React.useState(false);
+  const [docId,setDocId] = React.useState("");
+  const [docType,setDocType] = React.useState("CCCD");
+  const [file,setFile] = React.useState<File|null>(null);
+  const [note,setNote] = React.useState("");
+  const [tags,setTags] = React.useState("");
+  const [msg,setMsg] = React.useState("");
+  const [uploaded,setUploaded] = React.useState<any>(null);
 
-  const onSubmit = async (e: React.FormEvent) => {
-    e.preventDefault()
-    try {
-      setMsg('')
-      if (!docId.trim() || !file) { setMsg('Vui lòng nhập Mã giấy tờ và chọn File.'); return }
-      const h = hash || await sha256File(file)
-      await registerDocument(
-        docId.trim(),
-        docType,
-        h,
-        { note, tags: tags.split(',').map(s => s.trim()).filter(Boolean) }
-      )
-      setMsg('✅ Đã lưu giấy tờ vào kho cục bộ.')
-      setDocId(''); setDocType('CCCD'); setFile(null); setNote(''); setTags(''); setHash('')
-    } catch (e: any) {
-      setMsg(e.message || 'Có lỗi xảy ra')
-    }
-  }
+  const toBase64 = (file: File)=>new Promise<string>((resolve)=>{
+    const r = new FileReader();
+    r.onload=()=>resolve((r.result as string).split(",")[1]);
+    r.readAsDataURL(file);
+  });
+
+  const connect = async ()=>{
+    try{
+      await connectWallet();
+      setConnected(true);
+      setMsg("🟢 Ví MetaMask đã kết nối");
+    } catch(err:any){ setMsg(err.message); }
+  };
+
+  const onSubmit = async(e:React.FormEvent)=>{
+    e.preventDefault();
+    if(!connected) return setMsg("⚠ Chưa kết nối MetaMask!");
+    if(!file || !docId) return setMsg("⚠ Thiếu file hoặc mã tài liệu!");
+
+    try{
+      setMsg("⏳ Đang xử lý...");
+
+      const token = localStorage.getItem("auth_token") ?? "";
+      const fileHash = await sha256File(file);
+
+      // 1️⃣ Save metadata to DB
+      const saved = await fetch("http://localhost:3000/api/documents",{
+        method:"POST",
+        headers:{ "Content-Type":"application/json", Authorization:`Bearer ${token}` },
+        body:JSON.stringify({ docId,type:docType,hash:fileHash,note,tags:tags.split(",").map(t=>t.trim()) })
+      }).then(r=>r.json());
+      if(!saved.id) throw new Error("Lưu DB thất bại");
+
+      // 2️⃣ Upload → IPFS
+      const base64 = await toBase64(file);
+      const uploadedIPFS = await fetch(`http://localhost:3000/api/documents/${saved.id}/upload`,{
+        method:"POST",
+        headers:{ "Content-Type":"application/json", Authorization:`Bearer ${token}` },
+        body:JSON.stringify({ filename:file.name, base64 })
+      }).then(r=>r.json());
+      if(!uploadedIPFS.cid) throw new Error("Upload IPFS lỗi");
+
+      // 3️⃣ Blockchain (MetaMask popup 🔥)
+      const contract = await getContract();
+      const tx = await contract.register("0x"+fileHash, uploadedIPFS.cid);
+      await tx.wait();
+
+      setUploaded({ cid:uploadedIPFS.cid, tx:tx.hash });
+      setMsg("UPLOAD THÀNH CÔNG + BLOCKCHAIN GHI NHẬN!");
+
+    }catch(err:any){ setMsg("❌ "+err.message); }
+  };
 
   return (
-    <form className="upload" onSubmit={onSubmit}>
-      {/* Cột trái: Thông tin & file */}
-      <div className="upload-card">
-        <div className="row">
-          <input
-            className="input"
-            placeholder="Mã giấy tờ (ví dụ: số CCCD)"
-            value={docId}
-            onChange={e=>setDocId(e.target.value)}
-          />
-          <select
-            className="input"
-            value={docType}
-            onChange={e=>setDocType(e.target.value as DocType)}
-          >
-            <option value="CCCD">CCCD</option>
-            <option value="CMND">CMND</option>
-            <option value="HoChieu">Hộ chiếu</option>
-            <option value="BangLai">Bằng lái</option>
-            <option value="GiayKhaiSinh">Giấy khai sinh</option>
-            <option value="Khac">Khác</option>
-          </select>
-        </div>
+    <div style={{maxWidth:650,margin:"40px auto",fontFamily:"sans-serif"}}>
+      
+      {/* HEADER */}
+      <h2 style={{textAlign:"center",marginBottom:10}}>Upload Tài Liệu + Blockchain</h2>
+      <p style={{textAlign:"center",opacity:0.7}}>Lưu trữ IPFS + Xác thực trên Smart Contract</p>
 
-        <div className="file-row" style={{ marginTop: 10 }}>
-          <input type="file" accept=".png,.jpg,.jpeg,.pdf" onChange={e=>onPickFile(e.target.files?.[0] || null)} />
-          <button type="button" className="btn ghost" onClick={onHash}>Tính SHA-256</button>
-          {file && <span className="file-chip" title={file.name}>{file.name}</span>}
-        </div>
+      {/* Connect Wallet */}
+      <button onClick={connect}
+        style={{
+          width:"100%",padding:"12px",borderRadius:8,fontSize:17,fontWeight:600,
+          background:connected?"#12c24a":"#ffb100",border:"none",cursor:"pointer",marginBottom:20
+        }}
+      >
+        {connected?"🟢 Wallet Connected":" KẾT NỐI METAMASK"}
+      </button>
+      
+      {/* FORM CARD */}
+      <form onSubmit={onSubmit} 
+        style={{padding:20,border:"2px solid #ddd",borderRadius:12,background:"#fafafa"}}>
 
-        {hash && <div className="hash-box">SHA-256: {hash}</div>}
-      </div>
+        <label>Mã tài liệu</label>
+        <input value={docId} onChange={e=>setDocId(e.target.value)}
+          style={input}/>
 
-      {/* Cột phải: Ghi chú/Tags + Lưu */}
-      <div className="upload-card">
-        <textarea
-          className="input"
-          placeholder="Ghi chú"
-          value={note}
-          onChange={e=>setNote(e.target.value)}
-          rows={4}
-        />
-        <input
-          className="input"
-          style={{ marginTop: 10 }}
-          placeholder="Tags (phân tách bằng dấu phẩy)"
-          value={tags}
-          onChange={e=>setTags(e.target.value)}
-        />
-        <div className="row" style={{ marginTop: 10 }}>
-          <button className="btn">Lưu giấy tờ</button>
+        <label>Loại giấy tờ</label>
+        <select value={docType} onChange={e=>setDocType(e.target.value)} style={input}>
+          <option>CCCD</option><option>CMND</option><option>BangLai</option>
+          <option>HoChieu</option><option>GiayKhaiSinh</option><option>Khac</option>
+        </select>
+
+        <label>Chọn file</label>
+        <input type="file" onChange={e=>setFile(e.target.files?.[0]||null)} style={input}/>
+        
+        <label>Ghi chú</label>
+        <textarea rows={3} value={note} onChange={e=>setNote(e.target.value)} style={input}/>
+
+        <label>Tags (CMND, CCCD,...)</label>
+        <input value={tags} onChange={e=>setTags(e.target.value)} style={input}/>
+
+        <button type="submit"
+          style={{
+            width:"100%",marginTop:15,padding:"12px",borderRadius:8,fontSize:17,fontWeight:600,
+            background:"#007bff",color:"#fff",border:"none",cursor:"pointer"
+          }}>
+          UPLOAD & GHI BLOCKCHAIN
+        </button>
+      </form>
+
+      {/* Message */}
+      {msg && <p style={{marginTop:15,textAlign:"center",fontWeight:600}}>{msg}</p>}
+
+      {/* Upload Result */}
+      {uploaded && (
+        <div style={{
+          marginTop:18,padding:14,borderRadius:10,border:"2px solid #00b4d8",
+          background:"#e8f9ff",textAlign:"center"
+        }}>
+          <p><b>CID:</b> {uploaded.cid}</p>
+          <p><b>TxHash:</b> {uploaded.tx}</p>
+          <button 
+            onClick={()=>window.open(`https://gateway.pinata.cloud/ipfs/${uploaded.cid}`)} 
+            style={{marginTop:10,padding:"10px 15px",background:"#007bff",color:"#fff",borderRadius:6,border:"none"}}>
+            📄 Xem tài liệu trên IPFS
+          </button>
         </div>
-        {msg && <p style={{ marginTop: 8 }}>{msg}</p>}
-      </div>
-    </form>
-  )
+      )}
+
+    </div>
+  );
 }
+
+/* Simple input style RE-USED */
+const input = {
+  width:"100%",padding:"9px 12px",marginBottom:12,
+  border:"1px solid #bbb",borderRadius:6,fontSize:15
+} as const;

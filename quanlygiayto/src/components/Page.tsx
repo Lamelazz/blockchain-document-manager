@@ -49,7 +49,7 @@ export function Page({ title, children }: Props) {
       </header>
 
       <div className="card">{children}</div>
-      <footer>© 2025 – Trình quản lý giấy tờ cá nhân (FE only)</footer>
+      <footer></footer>
     </div>
   )
 }

@@ -3,91 +3,157 @@ import { listDocuments, verifyDocument, softDelete, registerDocument } from '../
 import { Link } from 'react-router-dom'
 import { currentUser } from '../services/auth'
 
-export default function DocumentListPage() {
-  const [q, setQ] = React.useState('')
-  const [items, setItems] = React.useState<any[]>([])
-  const user = currentUser()
 
-  const load = React.useCallback(() => {
-    listDocuments({ q }).then(setItems)
-  }, [q])
+/*================ BADGE =================*/
+function StatusBadge({ verified, state }:any) {
+  const b={padding:"4px 8px",borderRadius:5,color:"#fff",fontSize:12,fontWeight:600}
+  if(verified) return <span style={{...b,background:"#16a34a"}}>Đã xác thực</span>
+  if(state==="SUBMITTED") return <span style={{...b,background:"#fbbf24",color:"#000"}}>Chờ duyệt</span>
+  if(state==="REJECTED") return <span style={{...b,background:"#dc2626"}}>Bị từ chối</span>
+  return <span style={{...b,background:"#6b7280"}}>Nháp</span>
+}
 
-  React.useEffect(() => { load() }, [load])
 
-  // Tạo nhanh 1 bản ghi demo để bạn test UI
-  const seedDemo = async () => {
-    const id = 'DEMO-' + Math.random().toString(36).slice(2, 7).toUpperCase()
-    await registerDocument(id, 'CCCD', 'DEMO_HASH_' + Date.now(), {
-      note: 'Tài liệu mẫu để thử UI',
-      tags: ['demo', 'sample']
-    })
-    load()
-  }
+/*================ API: lấy danh sách share =================*/
+async function getSharedDocs(): Promise<string[]> {
+  const token = localStorage.getItem("auth_token")
+  const res = await fetch("http://localhost:3000/api/documents/shared/list",{
+    headers:{ Authorization:"Bearer "+token }
+  })
+  return res.ok ? await res.json() : []
+}
+
+
+/*================ MAIN =================*/
+export default function DocumentListPage(){
+
+  const [q,setQ]=React.useState("")
+  const [items,setItems]=React.useState<any[]>([])
+  const [shared,setShared]=React.useState<string[]>([])
+  const user=currentUser()
+
+  const load = React.useCallback(()=>{
+  listDocuments({q}).then(docs=>{
+    
+    // thêm logic lọc theo từ khóa tìm kiếm
+    const key = q.toLowerCase().trim();
+
+    const filtered = docs.filter((d:any)=>
+      d.id.toLowerCase().includes(key) ||           // Tìm theo Mã tài liệu
+      d.owner.toLowerCase().includes(key) ||        // Tìm theo tên chủ sở hữu
+      d.documentType?.toLowerCase().includes(key)   // Tìm theo loại tài liệu
+    );
+
+    setItems(filtered)
+  })
+
+  getSharedDocs().then(setShared)
+
+},[q])
+
+
+  React.useEffect(()=>{ load() },[load])
+
 
   return (
-    <div className="grid">
-      {/* Toolbar cân đối */}
-      <div className="toolbar">
-        <input
-          className="input grow"
-          placeholder="Tìm theo mã/loại/hash..."
-          value={q}
-          onChange={e=>setQ(e.target.value)}
-          onKeyDown={e=>{ if (e.key==='Enter') load() }}
-        />
-        <button className="btn ghost" onClick={load}>Tìm</button>
-        <Link className="btn" to="/upload">+ Thêm mới</Link>
-      </div>
+<div style={{padding:22}}>
 
-      {/* Danh sách hoặc Empty state */}
-      {items.length > 0 ? (
-        <div className="list">
-          {items.map(it => (
-            <div className="item" key={it.id}>
-              <div className="row" style={{ justifyContent:'space-between' }}>
-                <div>
-                  <div style={{ fontWeight:700 }}>
-                    <Link to={`/documents/${it.id}`}>{it.id}</Link>
-                  </div>
-                  <div className="badge">{it.type}</div>
-                </div>
+  <h2 style={{marginBottom:18,fontSize:26,fontWeight:700}}>📄 Danh sách tài liệu</h2>
 
-                {/* Chỉ admin được xác thực/xóa */}
-                {user?.role === 'admin' && (
-                  <div className="row">
-                    <button className="btn ghost" onClick={()=>verifyDocument(it.id).then(load)}>
-                      Đánh dấu xác thực
-                    </button>
-                    <button className="btn danger" onClick={()=>softDelete(it.id).then(load)}>
-                      Xóa
-                    </button>
-                  </div>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
-      ) : (
-        <div className="empty-wrap">
-          <div className="empty-state">
-            <div className="empty-icon" aria-hidden="true">
-              {/* icon SVG nhẹ, không cần thêm ảnh */}
-              <svg width="40" height="40" viewBox="0 0 24 24" fill="none">
-                <rect x="3" y="4" width="18" height="16" rx="3" stroke="#2563eb" strokeWidth="1.5" />
-                <path d="M7 8h7M7 12h10M7 16h6" stroke="#2563eb" strokeWidth="1.5" strokeLinecap="round"/>
-              </svg>
-            </div>
-            <div>
-              <h3 className="empty-title">Chưa có giấy tờ</h3>
-              <p className="empty-sub">Hãy tải giấy tờ đầu tiên của bạn hoặc tạo một mục mẫu để xem giao diện danh sách.</p>
-              <div className="empty-actions">
-                <Link className="btn" to="/upload">+ Tải giấy tờ</Link>
-                <button className="btn ghost" onClick={seedDemo}>Tạo dữ liệu mẫu</button>
-              </div>
-            </div>
+  {/*============== SEARCH ==============*/}
+  <div style={{display:"flex",gap:8,marginBottom:20}}>
+    <input style={{padding:"9px 12px",borderRadius:6,border:"1px solid #ccc",flex:1}}
+      placeholder="Tìm theo mã,tên chủ sở hữu,loại tài liệu,..."
+      value={q}
+      onChange={e=>setQ(e.target.value)}
+      onKeyDown={e=>e.key==="Enter"&&load()}
+    />
+    <button onClick={load} style={{padding:"9px 14px",borderRadius:6}}>Tìm</button>
+    <Link to="/upload" style={{padding:"9px 14px",background:"#2563eb",color:"#fff",borderRadius:6}}>+ Upload</Link>
+  </div>
+
+
+
+  {/*============== LIST ==============*/}
+  <div style={{
+    display:"grid",
+    gridTemplateColumns:"repeat(auto-fill,minmax(300px,1fr))",
+    gap:18
+  }}>
+
+  {items.map(it=>{
+    
+    const isOwner    = it.owner===user?.username
+    const canOpen    = isOwner || shared.includes(it.id)   // ⭐ chỉ quyền truy cập FILE
+    const canSeeInfo = true                                // ⭐ ai cũng xem được info
+
+    return (
+      <div key={it.id} style={{
+        padding:18,
+        background:"#fff",
+        borderRadius:14,
+        boxShadow:"0 4px 14px rgba(0,0,0,.08)"
+      }}>
+
+        {/* ALWAYS CLICKABLE → xem chi tiết */}
+        <Link to={`/documents/${it.id}`} style={{fontSize:20,fontWeight:700,color:"#1d4ed8"}}>
+          {it.id}
+        </Link>
+
+        <div style={{fontSize:14,opacity:.8}}>Chủ sở hữu: <b>{it.owner}</b></div>
+        <div style={{marginTop:6}}><StatusBadge verified={it.verified} state={it.state}/></div>
+
+
+        {/*================ VIEW CONTROL =================*/}
+        {canOpen && it.ipfsCid && (
+          <a href={`https://gateway.pinata.cloud/ipfs/${it.ipfsCid}`}
+             target="_blank" rel="noreferrer"
+             style={{
+              marginTop:12,display:"inline-block",
+              padding:"9px 12px",background:"#007bff",
+              color:"#fff",borderRadius:6,fontWeight:600
+             }}>
+             Mở tài liệu (IPFS)
+          </a>
+        )}
+
+        {!canOpen && (
+          <div style={{marginTop:12,color:"#888",fontSize:14}}>
+             Bạn vẫn xem được chi tiết →  
+            <Link to={`/documents/${it.id}`} style={{color:"#2563eb"}}> mở</Link>
           </div>
-        </div>
-      )}
-    </div>
+        )}
+
+
+        {/*================ ADMIN =================*/}
+        {user?.role==="admin" && (
+          <div style={{display:"flex",gap:8,marginTop:12}}>
+
+            {!it.verified && (
+              <button style={{
+                flex:1,padding:"8px",background:"#16a34a",
+                color:"#fff",borderRadius:6,fontWeight:600
+              }} onClick={()=>verifyDocument(it.id).then(load)}>
+                Xác thực
+              </button>
+            )}
+
+            <button style={{
+              flex:1,padding:"8px",background:"#dc2626",
+              color:"#fff",borderRadius:6,fontWeight:600
+            }} onClick={()=>softDelete(it.id).then(load)}>
+              Xóa
+            </button>
+
+          </div>
+        )}
+
+      </div>
+    )
+  })}
+
+  </div>
+
+</div>
   )
 }

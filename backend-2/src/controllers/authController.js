@@ -1,83 +1,95 @@
-// controllers/authController.js
-const User = require('../models/User')
-const bcrypt = require('bcryptjs')
-const jwt = require('jsonwebtoken')
-const { logAudit } = require('./adminController')
-const { JWT_SECRET, JWT_EXPIRATION } = require('../config/jwt')
+const User = require("../models/User");
+const bcrypt = require("bcryptjs");
+const jwt = require("jsonwebtoken");
+const { logAudit } = require("./adminController");
+const { JWT_SECRET, JWT_EXPIRATION } = require("../config/jwt");
 
-/**
- * Xử lý yêu cầu Đăng ký tài khoản mới (RegisterPage.tsx)
- */
+
+/* ============================================================
+   🚀 TẠO ADMIN MẶC ĐỊNH (Chạy tự động khi server khởi động)
+===============================================================*/
+(async function ensureDefaultAdmin() {
+  const admin = await User.findOne({ where: { username: "admin" } });
+  if (!admin) {
+    const hash = await bcrypt.hash("admin", 10); // mật khẩu = admin
+    await User.create({
+      username: "admin",
+      email: "admin@local",
+      passwordHash: hash,       // ⚠ mapping đúng sang password_hash
+      role: "admin"
+    });
+    console.log("✔ Admin created automatically → login: admin / admin");
+  }
+})();
+
+
+/* ============================================================
+   🔥 REGISTER USERS (FE /register gọi)
+===============================================================*/
 exports.register = async (req, res) => {
   try {
-    const { username, email, password } = req.body
+    const { username, email, password } = req.body;
 
-    // 1. Kiểm tra tồn tại
-    const existingUser = await User.findOne({ where: { username } })
-    if (existingUser) {
-      return res.status(409).json({ message: 'Tên đăng nhập đã tồn tại.' })
-    }
+    if (!username || !email || !password || password.length < 6)
+      return res.status(400).json({ message: "Mật khẩu tối thiểu 6 ký tự." });
 
-    // Frontend đã kiểm tra tính hợp lệ cơ bản, Backend kiểm tra lại:
-    if (!username || !email || !password || password.length < 6) {
-      return res.status(400).json({ message: 'Vui lòng nhập đủ thông tin và mật khẩu phải từ 6 ký tự.' })
-    }
+    const exists = await User.findOne({ where: { username } });
+    if (exists) return res.status(409).json({ message: "Tên đăng nhập đã tồn tại." });
 
-    // 2. Hash mật khẩu và tạo người dùng
-    const passwordHash = await bcrypt.hash(password, 10)
-    const newUser = await User.create({
-      username: username.trim(),
-      email: email.trim(),
-      passwordHash,
-      role: 'user'
-    })
+    const hash = await bcrypt.hash(password, 10);
+
+    const user = await User.create({
+      username,
+      email,
+      passwordHash: hash,
+      role: "user"
+    });
 
     const token = jwt.sign(
-      { username: newUser.username, role: newUser.role, email: newUser.email },
+      { username:user.username, email:user.email, role:user.role },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRATION }
-    )
+    );
 
-    logAudit('REGISTER', newUser.username, { email: newUser.email })
-
-    res.status(201).json({ token, username: newUser.username, role: newUser.role, email: newUser.email })
-  } catch (error) {
-    console.error('Registration error:', error)
-    res.status(500).json({ message: 'Đăng ký thất bại. Vui lòng thử lại.' })
+    logAudit("REGISTER", username);
+    return res.status(201).json({ token, user });
+    
+  } catch (err) {
+    console.error("Register error:", err);
+    res.status(500).json({ message: "Lỗi server khi đăng ký." });
   }
-}
+};
 
+
+
+/* ============================================================
+   🔥 LOGIN USERS (FE /login dùng)
+===============================================================*/
 exports.login = async (req, res) => {
   try {
-    const { username, password } = req.body
+    const { username, password } = req.body;
 
-    if (!username || !password) {
-      return res.status(400).json({ message: 'Vui lòng nhập tên đăng nhập và mật khẩu.' })
-    }
+    if (!username || !password)
+      return res.status(400).json({ message: "Thiếu username/password." });
 
-    // 1. Tìm người dùng theo tên đăng nhập
-    const user = await User.findOne({ where: { username } })
-    if (!user) {
-      return res.status(401).json({ message: 'Tên đăng nhập hoặc mật khẩu không hợp lệ.' })
-    }
+    const user = await User.findOne({ where: { username } });
 
-    // 2. So sánh mật khẩu
-    const isMatch = await bcrypt.compare(password, user.passwordHash)
-    if (!isMatch) {
-      return res.status(401).json({ message: 'Tên đăng nhập hoặc mật khẩu không hợp lệ.' })
-    }
+    if (!user) return res.status(401).json({ message: "Sai tài khoản hoặc mật khẩu." });
+
+    const match = await bcrypt.compare(password, user.passwordHash);
+    if (!match) return res.status(401).json({ message: "Sai tài khoản hoặc mật khẩu." });
 
     const token = jwt.sign(
-      { username: user.username, role: user.role, email: user.email },
+      { username: user.username, role:user.role, email:user.email },
       JWT_SECRET,
       { expiresIn: JWT_EXPIRATION }
-    )
+    );
 
-    logAudit('LOGIN', user.username, {})
+    logAudit("LOGIN", username);
+    return res.status(200).json({ token, user });
 
-    res.json({ token, username: user.username, role: user.role, email: user.email })
-  } catch (error) {
-    console.error('Login error:', error)
-    res.status(500).json({ message: 'Đăng nhập thất bại.' })
+  } catch (err) {
+    console.error("Login error:", err);
+    res.status(500).json({ message: "Lỗi server khi đăng nhập." });
   }
-}
+};

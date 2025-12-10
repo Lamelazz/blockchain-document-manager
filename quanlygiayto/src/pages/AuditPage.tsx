@@ -8,7 +8,7 @@ export default function AuditPage() {
   React.useEffect(() => { setItems(read<any[]>(KEYS.AUDIT, [])) }, [])
 
   if (user?.role !== 'admin') {
-    return <div className="item">🚫 Chỉ quản trị viên mới xem được nhật ký hoạt động.</div>
+    return <div className="item">Chỉ quản trị viên mới xem được nhật ký hoạt động.</div>
   }
 
   return (

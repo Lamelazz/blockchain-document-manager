@@ -19,6 +19,7 @@ const User = sequelize.define('User', {
   },
   passwordHash: {
     type: DataTypes.STRING,
+    field: "password_hash",   // 🔥 MAP ĐÚNG CỘT DB
     allowNull: false
   },
   role: {
@@ -29,7 +30,7 @@ const User = sequelize.define('User', {
 }, {
   tableName: 'app_users',
   timestamps: true,
-  underscored: true
+  underscored: true       // 🔥 khớp created_at / updated_at
 })
 
 module.exports = User

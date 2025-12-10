@@ -1,79 +1,168 @@
+// =============================
+// DOCUMENT SERVICE — DB ONLY 
+// =============================
 
-import { read, write, KEYS, log } from './storage'
+export type DocType =
+  | "CCCD"
+  | "CMND"
+  | "HoChieu"
+  | "BangLai"
+  | "GiayKhaiSinh"
+  | "Khac";
 
-export type DocType = 'CCCD' | 'CMND' | 'HoChieu' | 'BangLai' | 'GiayKhaiSinh' | 'Khac'
+const API = "http://localhost:3000/api/documents";
 
-export type DocRecord = {
-  id: string
-  type: DocType
-  hash: string
-  owner: string
-  createdAt: number
-  verified: boolean
-  note?: string
-  tags?: string[]
-  deleted?: boolean
+
+// =============================
+// AUTH HEADER
+// =============================
+function authHeaders() {
+  const token = localStorage.getItem("auth_token");
+  if (!token) console.warn("⚠ Không tìm thấy Token — FE sẽ bị 401!");
+
+  return {
+    "Content-Type": "application/json",
+    Authorization: `Bearer ${token}`,
+  };
 }
 
-function getAll(): DocRecord[] { return read<DocRecord[]>(KEYS.DOCS, []) }
-function saveAll(list: DocRecord[]) { write(KEYS.DOCS, list) }
 
-export async function registerDocument(id: string, type: DocType, hash: string, extras: Partial<DocRecord> = {}) {
-  const list = getAll()
-  const exists = list.find(d => d.id === id)
-  if (exists) throw new Error('ID đã tồn tại trong kho cục bộ')
-  const rec: DocRecord = {
-    id, type, hash,
-    owner: 'me',
-    createdAt: Date.now(),
-    verified: false,
-    note: extras.note,
-    tags: extras.tags || []
-  }
-  list.unshift(rec)
-  saveAll(list)
-  log('ADD_DOCUMENT', { id, type })
-  return rec
+// =============================
+// BASE REQUEST HANDLERS
+// =============================
+async function apiGet(url: string) {
+  const res = await fetch(url, { headers: authHeaders() });
+  let data = null;
+  try { data = await res.json(); } catch {}
+
+  if (!res.ok) throw new Error(data?.message || "Backend GET error");
+  return data;
 }
 
-export async function updateDocument(id: string, patch: Partial<DocRecord>) {
-  const list = getAll()
-  const idx = list.findIndex(d => d.id === id)
-  if (idx < 0) throw new Error('Không tìm thấy tài liệu')
-  list[idx] = { ...list[idx], ...patch }
-  saveAll(list)
-  log('UPDATE_DOCUMENT', { id, patch })
-  return list[idx]
+async function apiPost(url: string, body: any) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  });
+
+  let data = null;
+  try { data = await res.json(); } catch {}
+
+  if (!res.ok) throw new Error(data?.message || "Backend POST error");
+  return data;
 }
 
+async function apiPut(url: string, body: any) {
+  const res = await fetch(url, {
+    method: "PUT",
+    headers: authHeaders(),
+    body: JSON.stringify(body),
+  });
+
+  let data = null;
+  try { data = await res.json(); } catch {}
+
+  if (!res.ok) throw new Error(data?.message || "Backend PUT error");
+  return data;
+}
+
+async function apiDelete(url: string) {
+  const res = await fetch(url, {
+    method: "DELETE",
+    headers: authHeaders(),
+  });
+
+  let data = null;
+  try { data = await res.json(); } catch {}
+
+  if (!res.ok) throw new Error(data?.message || "Backend DELETE error");
+  return data;
+}
+
+
+
+// ===================================================
+// 1) REGISTER DOCUMENT
+// ===================================================
+export async function registerDocument(
+  id: string,
+  type: DocType,
+  hash: string,
+  extras: { note?: string; tags?: string[] } = {}
+) {
+  return await apiPost(API, {
+    docId: id,
+    type,
+    hash,
+    note: extras.note || "",
+    tags: extras.tags || [],
+  });
+}
+
+
+
+// ===================================================
+// 2) UPDATE DOCUMENT
+// ===================================================
+export async function updateDocument(id: string, patch: any) {
+  return await apiPut(`${API}/${id}`, patch);
+}
+
+
+
+// ===================================================
+// 3) DELETE DOCUMENT
+// ===================================================
 export async function softDelete(id: string) {
-  return updateDocument(id, { deleted: true })
+  return await apiDelete(`${API}/${id}`);
 }
 
-export async function restore(id: string) {
-  return updateDocument(id, { deleted: false })
-}
 
+
+// ===================================================
+// 🔥 4) VERIFY DOCUMENT (Admin) — ĐÃ FIX ĐÚNG ROUTE
+// ===================================================
 export async function verifyDocument(id: string) {
-  return updateDocument(id, { verified: true })
+  return await apiPut(`${API}/verify/${id}`, { verified: true });
 }
 
+
+
+// ===================================================
+// 5) GET ONE DOCUMENT
+// ===================================================
 export async function getDocument(id: string) {
-  const d = getAll().find(x => x.id === id)
-  if (!d) throw new Error('Không có dữ liệu')
-  // giữ định dạng tương thích trang cũ: [type, hash, owner, createdAtSeconds, verified]
-  return [d.type, d.hash, d.owner, Math.floor(d.createdAt/1000), d.verified]
+  const d = await apiGet(`${API}/${id}`);
+  return [
+    d.type,
+    d.currentHash || d.hash,
+    d.owner,
+    Math.floor(new Date(d.createdAt).getTime() / 1000),
+    !!d.verified,
+  ];
 }
 
-export async function listDocuments(opts?: { includeDeleted?: boolean; q?: string; tags?: string[] }) {
-  let list = getAll()
-  if (!opts?.includeDeleted) list = list.filter(d => !d.deleted)
-  if (opts?.q) {
-    const s = opts.q.toLowerCase()
-    list = list.filter(d => d.id.toLowerCase().includes(s) || d.type.toLowerCase().includes(s) || d.hash.includes(s) || (d.note||'').toLowerCase().includes(s))
-  }
-  if (opts?.tags?.length) {
-    list = list.filter(d => (d.tags||[]).some(t => opts.tags!.includes(t)))
-  }
-  return list
+
+
+// ===================================================
+// 6) LIST DOCUMENTS
+// ===================================================
+export async function listDocuments(opts?: {
+  q?: string;
+  tags?: string[];
+  includeDeleted?: boolean;
+}) {
+  let url = API;
+
+  const params = new URLSearchParams();
+  if (opts?.q) params.append("q", opts.q);
+  if (opts?.includeDeleted) params.append("includeDeleted", "1");
+  if (opts?.tags?.length) params.append("tags", opts.tags.join(","));
+
+  if (params.toString()) url += `?${params}`;
+
+  const docs = await apiGet(url);
+
+  return docs.filter((d: any) => opts?.includeDeleted ? true : !d.isDeleted);
 }

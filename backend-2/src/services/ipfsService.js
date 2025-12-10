@@ -1,28 +1,41 @@
-const crypto = require('crypto')
+require("dotenv").config();
+const FormData = require("form-data");
+const fetch = require("node-fetch");
 
-const ipfsService = {
-  async uploadFile (fileBuffer) {
-    const sha256Hash = crypto.createHash('sha256').update(fileBuffer).digest('hex')
-    console.log(`[IPFS Mock] File uploaded, Hash: ${sha256Hash}`)
-    return sha256Hash
-  },
+async function uploadBase64(filename, base64) {
+  const url = "https://api.pinata.cloud/pinning/pinFileToIPFS";
 
-  async downloadFile (ipfsHash) {
-    console.log(`[IPFS Mock] Downloading file with Hash: ${ipfsHash}`)
-    return Buffer.from(`Nội dung tệp cho Hash: ${ipfsHash}. Đây là file giả lập.`)
-  },
+  const buffer = Buffer.from(base64, "base64");
 
-  // THÊM MỚI: Function cho documentController
-  async uploadBase64 (filename, base64String) {
-    const buffer = Buffer.from(base64String, 'base64')
-    const cid = crypto.createHash('sha256').update(buffer).digest('hex')
-    console.log(`[IPFS Mock] Uploaded ${filename}, CID: ${cid}`)
+  const form = new FormData();
+  form.append("file", buffer, { filename });
 
-    return {
-      cid: cid,
-      gatewayUrl: `https://ipfs.io/ipfs/${cid}`
-    }
+  const res = await fetch(url, {
+    method: "POST",
+    timeout: 60000, // ⬅ tăng timeout lên 60 giây
+    headers: {
+      pinata_api_key: process.env.PINATA_API_KEY,
+      pinata_secret_api_key: process.env.PINATA_SECRET,
+      ...form.getHeaders(), // ❗ CỰC QUAN TRỌNG
+    },
+    body: form,
+  }).catch(e=>{
+    throw new Error("❌ Network/PINATA REQUEST FAILED: " + e.message);
+  });
+
+  const json = await res.json().catch(()=>null);
+
+  if (!json || !json.IpfsHash) {
+    console.log("📌 PINATA RAW:", json);
+    throw new Error("Network/IPFS failed");
   }
+
+  console.log("📥 PINATA OK:", json.IpfsHash);
+
+  return {
+    cid: json.IpfsHash,
+    url: `https://gateway.pinata.cloud/ipfs/${json.IpfsHash}`,
+  };
 }
 
-module.exports = ipfsService
+module.exports = { uploadBase64 };

@@ -1,7 +1,4 @@
-// config/jwt.js
-
-// ⚠️ BẠN NÊN THAY ĐỔI CHUỖI NÀY VỚI MỘT CHUỖI BÍ MẬT DÀI VÀ PHỨC TẠP HƠN
-const JWT_SECRET = 'YOUR_JWT_SECRET_KEY'
-const JWT_EXPIRATION = '1d'
+const JWT_SECRET = 'n#9J$6p@f8G!4K2LwQ8eZ%1xT*rC7bH$UyP@qE!N^$vB3zQmWx' 
+const JWT_EXPIRATION = '7d'
 
 module.exports = { JWT_SECRET, JWT_EXPIRATION }
